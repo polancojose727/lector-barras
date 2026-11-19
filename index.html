@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lector de códigos</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; background: #101827; color: #fff; font-family: Arial, sans-serif; }
+    main { max-width: 540px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 6px 0; }
+    p { color: #cad5e4; font-size: 14px; line-height: 1.45; }
+    #reader { background: #000; border-radius: 14px; overflow: hidden; margin: 16px 0; }
+    button { width: 100%; border: 0; border-radius: 10px; padding: 14px; font-size: 16px; font-weight: bold; margin: 7px 0; background: #2e80d5; color: white; }
+    button.secondary { background: #334155; }
+    button:disabled { opacity: .5; }
+    #estado { min-height: 45px; padding: 12px; background: #263449; border-radius: 10px; font-size: 14px; line-height: 1.4; }
+    label { display: block; margin: 18px 0 6px; font-size: 14px; }
+    input { width: 100%; padding: 12px; border-radius: 9px; border: 1px solid #65748b; font-size: 17px; }
+    .nota { font-size: 12px; color: #9eacc0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Escáner de códigos de barras</h1>
+    <p>Apunta la cámara trasera al código. Al detectarlo, se enviará a la aplicación de inventario.</p>
+    <div id="reader"></div>
+    <button id="btnIniciar" onclick="iniciarCamara()">Iniciar cámara</button>
+    <button id="btnDetener" class="secondary" onclick="detenerCamara()" disabled>Detener cámara</button>
+    <div id="estado">Pulsa “Iniciar cámara” y acepta el permiso de cámara del navegador.</div>
+
+    <label for="codigoManual">¿No se pudo leer?</label>
+    <input id="codigoManual" type="text" inputmode="numeric" placeholder="Escribe el código manualmente">
+    <button class="secondary" onclick="enviarCodigo(document.getElementById('codigoManual').value)">Enviar código manual</button>
+    <p class="nota">La cámara requiere HTTPS y permiso del navegador. Si el navegador pregunta, selecciona la cámara trasera.</p>
+  </main>
+
+  <script>
+    let lector = null;
+    let camaraActiva = false;
+    let codigoEnviado = false;
+
+    function estado(texto) {
+      document.getElementById('estado').textContent = texto;
+    }
+
+    async function iniciarCamara() {
+      if (camaraActiva) return;
+      if (typeof Html5Qrcode === 'undefined') {
+        estado('No se pudo cargar la librería del lector. Comprueba la conexión a Internet y recarga la página.');
+        return;
+      }
+
+      codigoEnviado = false;
+      const formatos = [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.ITF,
+        Html5QrcodeSupportedFormats.QR_CODE
+      ];
+      lector = new Html5Qrcode('reader', { formatsToSupport: formatos, verbose: false });
+      const opciones = {
+        fps: 12,
+        qrbox: function(ancho, alto) {
+          return { width: Math.min(320, Math.floor(ancho * 0.9)), height: Math.min(130, Math.floor(alto * 0.35)) };
+        },
+        aspectRatio: 1.777
+      };
+
+      estado('Solicitando permiso de cámara…');
+      try {
+        await lector.start({ facingMode: 'environment' }, opciones,
+          function(textoLeido) { enviarCodigo(textoLeido); },
+          function() { /* Se ignoran los intentos de lectura sin resultado. */ }
+        );
+        camaraActiva = true;
+        document.getElementById('btnIniciar').disabled = true;
+        document.getElementById('btnDetener').disabled = false;
+        estado('Cámara activa. Centra el código de barras dentro del recuadro.');
+      } catch (error) {
+        estado('No se pudo abrir la cámara: ' + (error && error.message ? error.message : error) + '. Verifica los permisos y que la página esté abierta mediante HTTPS.');
+      }
+    }
+
+    async function detenerCamara() {
+      if (lector && camaraActiva) {
+        try { await lector.stop(); } catch (e) { /* La cámara pudo haberse detenido ya. */ }
+        camaraActiva = false;
+      }
+      document.getElementById('btnIniciar').disabled = false;
+      document.getElementById('btnDetener').disabled = true;
+      estado('Cámara detenida.');
+    }
+
+    async function enviarCodigo(valor) {
+      const codigo = String(valor || '').trim();
+      if (!codigo || codigoEnviado) return;
+      codigoEnviado = true;
+      estado('Código leído: ' + codigo + '. Enviándolo a la aplicación…');
+      await detenerCamara();
+
+      if (window.opener && !window.opener.closed) {
+        // La aplicación principal valida el origen del mensaje antes de aceptarlo.
+        window.opener.postMessage({ type: 'BARCODE_SCANNED', code: codigo }, '*');
+        estado('Código enviado. Puedes volver a la pestaña del inventario.');
+        setTimeout(function() { window.close(); }, 700);
+      } else {
+        document.getElementById('codigoManual').value = codigo;
+        estado('No se encontró la ventana del inventario. Copia el código o vuelve a abrir el lector desde la aplicación.');
+        codigoEnviado = false;
+      }
+    }
+  </script>
+</body>
+</html>
